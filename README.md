@@ -15,6 +15,47 @@ The repository is source-only. Downloaded graph data, compiled executables,
 runtime CSV files, PBS logs, generated figures, and report files are intentionally
 excluded.
 
+## Quick start on Vanda
+
+Run every command from the repository root. The PBS scripts use
+`PBS_O_WORKDIR` to find the source code, data, and helper scripts.
+
+```bash
+git clone https://github.com/deinvater111/pagerankproject.git
+cd pagerankproject
+mkdir -p data
+```
+
+Download and decompress the Pokec relationship file as described below so that
+`data/soc-pokec-relationships.txt` exists. Then load the CPU environment and
+compile:
+
+```bash
+source config/vanda_env.sh
+make -j 4
+```
+
+Submit preprocessing and wait for it to finish successfully:
+
+```bash
+qsub scripts/vanda_preprocess.pbs
+```
+
+Verify that preprocessing produced the graph metadata:
+
+```bash
+test -f data/pokec_graph/graph.meta && echo "Pokec preprocessing passed"
+```
+
+Run correctness validation before collecting performance measurements:
+
+```bash
+qsub scripts/vanda_correctness.pbs
+```
+
+After the correctness job finishes with `Exit_status = 0`, submit the performance
+experiments in the order documented below.
+
 ## Directory structure
 
 ```text
@@ -27,6 +68,7 @@ src/pagerank_hybrid.cpp          Hybrid MPI-OpenMP PageRank
 src/pagerank_openmp_gpu.cpp      OpenMP target-offload PageRank
 config/vanda_env.sh              Vanda GCC and Open MPI environment
 config/vanda_gpu_env.sh          Vanda NVIDIA OpenMP-offload environment
+config/results_manifest.conf     Curated CSV selection for final analysis
 scripts/                         Validation, experiment, and analysis scripts
 tests/                           Small directed graphs for correctness tests
 ```
@@ -37,14 +79,23 @@ Download the SNAP Pokec relationship network from:
 
 <https://snap.stanford.edu/data/soc-Pokec.html>
 
-Decompress the relationship file and place it at:
+Create the data directory, move the downloaded archive into it, and decompress
+the archive:
+
+```bash
+mkdir -p data
+mv /path/to/soc-pokec-relationships.txt.gz data/
+gunzip data/soc-pokec-relationships.txt.gz
+```
+
+The resulting file must be located at:
 
 ```text
 data/soc-pokec-relationships.txt
 ```
 
 Each input row `u v` represents a directed relationship from user identifier
-`u` to user identifier `v`. The submitted dataset contains 1,632,803 vertices
+`u` to user identifier `v`. The Pokec relationship dataset contains 1,632,803 vertices
 and 30,622,564 directed edges. The dataset itself is not included in this
 repository.
 
@@ -91,6 +142,10 @@ bin/pagerank_serial
 bin/pagerank_hybrid
 ```
 
+The manual build verifies that the compiler and MPI environment are available.
+The preprocessing PBS job performs a clean CPU rebuild on its allocated compute
+node before converting the Pokec graph.
+
 The OpenMP GPU executable is compiled on a GPU node by the GPU PBS job. It can
 also be built after loading the NVIDIA environment:
 
@@ -112,6 +167,10 @@ The job creates an incoming Compressed Sparse Row (CSR) graph under
 `data/pokec_graph/`. PageRank timing excludes this preprocessing stage.
 
 ## Command-line programs
+
+The following commands are functional examples for an allocated compute node or
+a local MPI environment. Do not run computational experiments directly on a
+Vanda login node. Use the supplied PBS scripts for the reported Vanda timings.
 
 Run the serial implementation directly with:
 
@@ -175,11 +234,41 @@ The CPU hybrid score vector is compared with the serial reference using L1 and
 maximum absolute differences. GPU validation uses the same comparison with
 floating-point tolerances.
 
+After completion, verify the PBS status and inspect the comparison CSV:
+
+```bash
+qstat -xf <JOBID>.stdct-mgmt-02 | grep -E \
+"job_state|Exit_status|resources_used.walltime|resources_used.cput"
+
+cat results/processed/score_vector_comparison_<JOBID>.stdct-mgmt-02.csv
+```
+
+A successful job has `job_state = F`, `Exit_status = 0`, and `passed=1` in the
+comparison file.
+
 ## Performance experiments
 
 Each performance script accepts a `REPETITIONS` variable. The reported results
 used three measurements per configuration: a one-repetition pilot followed by
 two additional repetitions.
+
+For each timing script, submit a pilot first:
+
+```bash
+experiment=scripts/vanda_serial_benchmark.pbs
+qsub -v REPETITIONS=1 "$experiment"
+```
+
+After validating the pilot, collect two additional measurements:
+
+```bash
+qsub -v REPETITIONS=2 "$experiment"
+```
+
+Replace the value of `experiment` with the timing script being measured.
+
+Preparation jobs, correctness jobs, and placement smoke tests are run once and
+do not require three repetitions.
 
 ### Serial Pokec baseline
 
@@ -191,6 +280,11 @@ qsub -v REPETITIONS=1 scripts/vanda_serial_benchmark.pbs
 
 ```bash
 qsub scripts/vanda_prepare_serial_scaling.pbs
+```
+
+Wait for graph preparation to finish successfully, then submit:
+
+```bash
 qsub -v REPETITIONS=1 scripts/vanda_serial_scaling.pbs
 ```
 
@@ -210,6 +304,11 @@ Two nodes, 144 ranks:
 
 ```bash
 qsub scripts/vanda_multinode_smoke.pbs
+```
+
+The smoke-test log must end with `Two-node smoke test passed`. Then submit:
+
+```bash
 qsub -v REPETITIONS=1 scripts/vanda_multinode.pbs
 ```
 
@@ -229,6 +328,9 @@ Verify one-node placement first:
 qsub scripts/vanda_hybrid_binding_smoke.pbs
 ```
 
+The log must end with `Hybrid binding smoke test passed` before timings are
+collected.
+
 Run the 72-core one-node sweep:
 
 ```bash
@@ -236,6 +338,12 @@ qsub -v REPETITIONS=1 scripts/vanda_hybrid_sweep.pbs
 ```
 
 Run the 144-core two-node sweep:
+
+```bash
+qsub scripts/vanda_multinode_smoke.pbs
+```
+
+After the multi-node smoke test passes:
 
 ```bash
 qsub -v REPETITIONS=1 scripts/vanda_multinode_hybrid.pbs
@@ -274,6 +382,10 @@ The job:
 3. sets `OMP_TARGET_OFFLOAD=MANDATORY`;
 4. validates the complete GPU score vector against the serial reference; and
 5. times both the serial CPU and GPU iteration loops on the same node.
+
+The job log must report `device_offload=1`, its PBS history must report
+`Exit_status = 0`, and the generated GPU score-comparison CSV must have
+`passed=1`.
 
 ### Pokec data analysis
 
@@ -317,17 +429,57 @@ A submitted job continues after the SSH connection closes. When it finishes,
 check that its PBS history reports `Exit_status = 0` and inspect the final log
 message and CSV row count.
 
+Use the complete job identifier printed by `qsub`:
+
+```bash
+qstat -xf <JOBID>.stdct-mgmt-02 | grep -E \
+"job_state|Exit_status|resources_used.walltime|resources_used.cput|resources_used.mem"
+```
+
+A successful completed job reports:
+
+```text
+job_state = F
+Exit_status = 0
+```
+
 ## Post-processing
 
 The final R analysis script requires R with `dplyr`, `ggplot2`, `readr`,
-`scales`, and `tidyr`. It expects the curated Vanda CSV files under
-`results/raw/` and writes figures and summary tables to the output directory:
+`scales`, and `tidyr`. It reads the selected result filenames from
+`config/results_manifest.conf`. Paths in the manifest are relative to the
+repository root, multiple files are comma-separated, and shell-style wildcards
+are supported. Exact filenames are preferred because they prevent failed pilots
+or obsolete jobs from entering the analysis accidentally.
+
+The committed manifest records the Vanda files used for the submitted report.
+For a new experiment series, copy it and replace the filenames with the new job
+IDs:
+
+```bash
+cp config/results_manifest.conf config/results_manifest.local.conf
+```
+
+Run the analysis with the committed manifest:
 
 ```bash
 Rscript scripts/analyze_and_plot_results_v4.R \
   "$PWD" \
-  analysis_output
+  analysis_output \
+  config/results_manifest.conf
 ```
+
+For newly collected results, pass the edited local manifest instead:
+
+```bash
+Rscript scripts/analyze_and_plot_results_v4.R \
+  "$PWD" \
+  analysis_output \
+  config/results_manifest.local.conf
+```
+
+The script validates numerical invariants and repetition counts before writing
+figures and summary tables to `analysis_output/`.
 
 The raw timing files are not included in this source-only submission package.
 

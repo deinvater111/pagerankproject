@@ -22,3 +22,6 @@
 *.swp
 __pycache__/
 *.pyc
+
+# User-specific result selections for newly collected job IDs
+/config/results_manifest.local.conf

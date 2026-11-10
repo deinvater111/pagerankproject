@@ -9,41 +9,76 @@ suppressPackageStartupMessages({
 })
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) != 2) stop("Usage: analyze_and_plot_results_v4.R PROJECT3_ROOT OUTPUT_DIR")
+if (length(args) < 2 || length(args) > 3) {
+  stop("Usage: analyze_and_plot_results_v4.R PROJECT3_ROOT OUTPUT_DIR [RESULTS_MANIFEST]")
+}
 
 project_root <- normalizePath(args[[1]], mustWork = TRUE)
 output_dir <- args[[2]]
+manifest_path <- if (length(args) == 3) {
+  args[[3]]
+} else {
+  file.path(project_root, "config", "results_manifest.conf")
+}
+manifest_path <- normalizePath(manifest_path, mustWork = TRUE)
 figure_dir <- file.path(output_dir, "figures_v4")
 table_dir <- file.path(output_dir, "tables_v4")
 dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
-raw_dir <- file.path(project_root, "results", "raw")
 
-paths <- list(
-  serial = file.path(raw_dir, "serial_1523505.stdct-mgmt-02.csv"),
-  serial_scaling = Sys.glob(file.path(raw_dir, "serial_scaling_153*.csv")),
-  strong_one_node = c(
-    file.path(raw_dir, "strong_1527107.stdct-mgmt-02.csv"),
-    file.path(raw_dir, "strong_1527185.stdct-mgmt-02.csv")
-  ),
-  strong_two_node = c(
-    file.path(raw_dir, "multinode_1526465.stdct-mgmt-02.csv"),
-    file.path(raw_dir, "multinode_1527091.stdct-mgmt-02.csv")
-  ),
-  strong_256 = Sys.glob(file.path(raw_dir, "strong256_*.csv")),
-  hybrid_one_node = Sys.glob(file.path(raw_dir, "hybrid_153*.csv")),
-  hybrid_two_node = Sys.glob(file.path(raw_dir, "multinode_hybrid_153*.csv")),
-  weak = Sys.glob(file.path(raw_dir, "weak256_153*.csv")),
-  openmp_gpu = Sys.glob(file.path(raw_dir, "openmp_gpu_[0-9]*.csv")),
-  openmp_gpu_cpu = Sys.glob(file.path(raw_dir, "openmp_gpu_node_cpu_*.csv"))
+read_manifest <- function(path) {
+  lines <- trimws(readLines(path, warn = FALSE))
+  lines <- lines[nzchar(lines) & !startsWith(lines, "#")]
+  separators <- regexpr("=", lines, fixed = TRUE)
+  if (length(lines) == 0 || any(separators < 2)) {
+    stop("Results manifest must contain key=value entries")
+  }
+
+  keys <- trimws(substr(lines, 1, separators - 1))
+  values <- trimws(substr(lines, separators + 1, nchar(lines)))
+  if (any(!nzchar(keys)) || any(!nzchar(values))) {
+    stop("Results manifest contains an empty key or value")
+  }
+  if (anyDuplicated(keys)) {
+    stop(paste("Results manifest contains duplicate keys:",
+               paste(unique(keys[duplicated(keys)]), collapse = ", ")))
+  }
+  setNames(as.list(values), keys)
+}
+
+resolve_manifest_entry <- function(value, key) {
+  entries <- trimws(strsplit(value, ",", fixed = TRUE)[[1]])
+  if (any(!nzchar(entries))) {
+    stop(paste("Manifest entry", key, "contains an empty filename"))
+  }
+
+  matches <- unlist(lapply(entries, function(entry) {
+    Sys.glob(file.path(project_root, entry))
+  }), use.names = FALSE)
+  matches <- unique(matches)
+  if (length(matches) == 0) {
+    stop(paste("Manifest entry", key, "did not match any files:", value))
+  }
+  normalizePath(matches, mustWork = TRUE)
+}
+
+manifest <- read_manifest(manifest_path)
+required_keys <- c(
+  "serial", "serial_scaling", "strong_one_node", "strong_two_node",
+  "strong_256", "hybrid_one_node", "hybrid_two_node", "weak",
+  "openmp_gpu", "openmp_gpu_cpu", "pokec_analysis"
 )
+missing_keys <- setdiff(required_keys, names(manifest))
+if (length(missing_keys) > 0) {
+  stop(paste("Results manifest is missing keys:", paste(missing_keys, collapse = ", ")))
+}
 
-required <- unlist(paths[c("serial", "serial_scaling", "strong_one_node",
-                           "strong_two_node", "hybrid_one_node",
-                           "hybrid_two_node", "weak", "openmp_gpu",
-                           "openmp_gpu_cpu")])
-if (length(required) == 0 || any(!file.exists(required))) {
-  stop(paste("Missing required curated CSV:", paste(required[!file.exists(required)], collapse = ", ")))
+paths <- setNames(lapply(required_keys, function(key) {
+  resolve_manifest_entry(manifest[[key]], key)
+}), required_keys)
+
+if (length(paths$pokec_analysis) != 1) {
+  stop("Manifest key pokec_analysis must resolve to exactly one CSV file")
 }
 
 read_many <- function(files) {
@@ -325,10 +360,7 @@ p <- ggplot(gpu_plot, aes(program_label, total_seconds_median, color = program_l
        x = NULL, y = "Runtime (s, log scale)") + theme_report()
 save_plot("openmp_gpu_v4.png", p, 6.2, 4.4)
 
-analysis_files <- Sys.glob(file.path(project_root, "results", "processed", "pokec_analysis_*.csv"))
-analysis_files <- analysis_files[!grepl("score", analysis_files)]
-if (length(analysis_files) < 1) stop("Missing Pokec analysis CSV")
-pokec <- read_csv(analysis_files[[1]], show_col_types = FALSE)
+pokec <- read_csv(paths$pokec_analysis[[1]], show_col_types = FALSE)
 value <- function(metric) as.numeric(pokec$value[pokec$metric == metric][[1]])
 concentration <- tibble(
   group = factor(c("Top 1%", "Top 5%", "Top 10%"), levels = c("Top 1%", "Top 5%", "Top 10%")),
@@ -356,6 +388,7 @@ high_variability <- bind_rows(
 write_csv(high_variability, file.path(table_dir, "high_variability_v4.csv"))
 
 cat("Validated curated primary data.\n")
+cat("Results manifest:", manifest_path, "\n")
 cat("Strong scaling maximum rank:", max(strong$mpi_processes), "\n")
 cat("Weak scaling maximum rank:", max(weak$mpi_processes), "\n")
 cat("OpenMP GPU speedup:", round(gpu_cpu_time / gpu_device_time, 3), "\n")
