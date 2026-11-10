@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_hybrid
+#PBS -l select=1:ncpus=72:mpiprocs=72:mem=64gb
+#PBS -l place=excl
+#PBS -l walltime=02:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+graph="data/pokec_graph"
+result="results/raw/hybrid_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+
+# Every configuration uses all 72 physical cores of one current Vanda CPU node.
+configurations=("72 1" "36 2" "18 4" "9 8" "6 12" "4 18" "2 36" "1 72")
+
+for partition in vertices edges; do
+  for configuration in "${configurations[@]}"; do
+    read -r ranks threads <<< "${configuration}"
+    for ((repeat=1; repeat<=repetitions; repeat++)); do
+      echo "hybrid partition=${partition} ranks=${ranks} threads=${threads} repeat=${repeat}"
+      run_mpi "${ranks}" "${threads}" bin/pagerank_hybrid \
+        --graph "${graph}" \
+        --partition "${partition}" \
+        --schedule static \
+        --fixed-iterations 100 \
+        --top-k 0 \
+        --quiet \
+        --output "${result}"
+    done
+  done
+done
+
+echo "Hybrid-sweep results: ${result}"

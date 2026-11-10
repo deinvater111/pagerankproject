@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_ser_data
+#PBS -l select=1:ncpus=1:mem=32gb
+#PBS -l walltime=04:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+make bin/generate_synthetic
+
+# Series A varies vertices while keeping 16 outgoing edges per vertex.
+for vertices in 250000 500000 1000000 2000000 4000000; do
+  output="data/serial_n${vertices}_k16"
+  if [[ ! -f "${output}/graph.meta" ]]; then
+    bin/generate_synthetic \
+      --vertices "${vertices}" \
+      --edges-per-vertex 16 \
+      --model skewed \
+      --seed 5208 \
+      --output "${output}"
+  fi
+done
+
+# Series B varies the number of edges at a fixed one-million vertices.
+for edges_per_vertex in 4 8 32; do
+  output="data/serial_n1000000_k${edges_per_vertex}"
+  if [[ ! -f "${output}/graph.meta" ]]; then
+    bin/generate_synthetic \
+      --vertices 1000000 \
+      --edges-per-vertex "${edges_per_vertex}" \
+      --model skewed \
+      --seed 5208 \
+      --output "${output}"
+  fi
+done
+
+echo "Serial-scaling graph preparation completed."

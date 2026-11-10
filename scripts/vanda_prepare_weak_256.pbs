@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_weak256_data
+#PBS -l select=1:ncpus=1:mem=32gb
+#PBS -l walltime=06:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+make bin/generate_synthetic
+
+base_vertices="${BASE_VERTICES:-100000}"
+edges_per_vertex="${EDGES_PER_VERTEX:-16}"
+
+for ranks in 1 2 4 8 16 32 64 128 256; do
+  vertices=$((base_vertices * ranks))
+  output="data/weak256_n${vertices}_k${edges_per_vertex}"
+  if [[ ! -f "${output}/graph.meta" ]]; then
+    echo "Generating weak-scaling graph for ${ranks} ranks: ${vertices} vertices"
+    bin/generate_synthetic \
+      --vertices "${vertices}" \
+      --edges-per-vertex "${edges_per_vertex}" \
+      --model skewed \
+      --seed 5208 \
+      --output "${output}"
+  fi
+done
+
+echo "Weak-scaling graphs through 256 ranks are ready."

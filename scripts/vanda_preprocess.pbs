@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#PBS -N pokec_prepare
+#PBS -l select=1:ncpus=1:mem=8gb
+#PBS -l walltime=01:00:00
+#PBS -j oe
+
+set -euo pipefail
+project_dir="${PBS_O_WORKDIR}"
+cd "${project_dir}"
+
+source "${project_dir}/config/vanda_env.sh"
+make clean
+make -j 1
+
+"${project_dir}/bin/preprocess" \
+  --input "${project_dir}/data/soc-pokec-relationships.txt" \
+  --output "${project_dir}/data/pokec_graph"
+
+echo "Preprocessing completed on $(hostname) at $(date)"

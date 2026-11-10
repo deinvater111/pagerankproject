@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_weak256_4n
+#PBS -l select=4:ncpus=64:mpiprocs=64:mem=128gb
+#PBS -l place=scatter:excl
+#PBS -l walltime=02:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+result="results/raw/weak256_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+base_vertices="${BASE_VERTICES:-100000}"
+edges_per_vertex="${EDGES_PER_VERTEX:-16}"
+vertices=$((base_vertices * 256))
+graph="data/weak256_n${vertices}_k${edges_per_vertex}"
+
+for ((repeat=1; repeat<=repetitions; repeat++)); do
+  echo "weak256 ranks=256 vertices=${vertices} repeat=${repeat}"
+  run_mpi_ppr 256 64 1 bin/pagerank_hybrid \
+    --graph "${graph}" \
+    --partition vertices \
+    --schedule static \
+    --fixed-iterations 100 \
+    --top-k 0 \
+    --quiet \
+    --output "${result}"
+done
+
+echo "Weak-scaling 256-rank results: ${result}"

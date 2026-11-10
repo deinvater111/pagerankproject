@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_serial
+#PBS -l select=1:ncpus=1:mem=16gb
+#PBS -l walltime=01:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+result="results/raw/serial_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+
+for ((repeat=1; repeat<=repetitions; repeat++)); do
+  echo "serial repeat=${repeat}"
+  bin/pagerank_serial \
+    --graph data/pokec_graph \
+    --fixed-iterations 100 \
+    --top-k 0 \
+    --quiet \
+    --output "${result}"
+done
+
+echo "Serial benchmark results: ${result}"

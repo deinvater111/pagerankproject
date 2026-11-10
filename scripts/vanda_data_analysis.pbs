@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_data
+#PBS -l select=1:ncpus=1:mem=16gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+run_result="results/raw/pokec_data_${PBS_JOBID}.csv"
+scores="results/processed/pokec_scores_${PBS_JOBID}.csv"
+summary="results/processed/pokec_analysis_${PBS_JOBID}.csv"
+top="results/processed/pokec_top20_${PBS_JOBID}.csv"
+
+bin/pagerank_serial \
+  --graph data/pokec_graph \
+  --tolerance 1e-10 \
+  --max-iterations 100 \
+  --top-k 20 \
+  --output "${run_result}" \
+  --scores-output "${scores}"
+
+python3 scripts/analyze_pokec.py \
+  --scores "${scores}" \
+  --summary "${summary}" \
+  --top "${top}" \
+  --top-k 20
+
+echo "Pokec analysis scores: ${scores}"
+echo "Pokec analysis summary: ${summary}"
+echo "Pokec top vertices: ${top}"

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_hyb_bind
+#PBS -l select=1:ncpus=72:mpiprocs=72:mem=16gb
+#PBS -l place=excl
+#PBS -l walltime=00:15:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+make -j 8
+
+graph="tests/generated/hybrid_binding_1000"
+if [[ ! -f "${graph}/graph.meta" ]]; then
+  bin/generate_synthetic \
+    --vertices 1000 \
+    --edges-per-vertex 16 \
+    --model skewed \
+    --seed 5208 \
+    --output "${graph}"
+fi
+
+result="results/pilot/hybrid_binding_${PBS_JOBID}.csv"
+mkdir -p results/pilot
+export REPORT_RANK_BINDING=1
+export OMP_DISPLAY_AFFINITY=TRUE
+export OMP_AFFINITY_FORMAT="host=%H process=%P thread=%n affinity=%A"
+
+configurations=("36 2" "18 4" "9 8" "6 12" "4 18" "2 36" "1 72")
+for configuration in "${configurations[@]}"; do
+  read -r ranks threads <<< "${configuration}"
+  echo "binding-smoke ranks=${ranks} threads=${threads}"
+  run_mpi "${ranks}" "${threads}" bin/pagerank_hybrid \
+    --graph "${graph}" \
+    --partition vertices \
+    --schedule static \
+    --fixed-iterations 2 \
+    --top-k 0 \
+    --quiet \
+    --output "${result}"
+done
+
+echo "Hybrid binding smoke test passed: ${result}"

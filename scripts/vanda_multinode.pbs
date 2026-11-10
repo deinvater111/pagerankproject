@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_2node
+#PBS -l select=2:ncpus=72:mpiprocs=72:mem=64gb
+#PBS -l place=scatter:excl
+#PBS -l walltime=01:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+result="results/raw/multinode_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+
+for partition in vertices edges; do
+  for ((repeat=1; repeat<=repetitions; repeat++)); do
+    echo "two-node partition=${partition} ranks=144 repeat=${repeat}"
+    run_mpi_ppr 144 72 1 bin/pagerank_hybrid \
+      --graph data/pokec_graph \
+      --partition "${partition}" \
+      --schedule static \
+      --fixed-iterations 100 \
+      --top-k 0 \
+      --quiet \
+      --output "${result}"
+  done
+done
+
+echo "Two-node results: ${result}"

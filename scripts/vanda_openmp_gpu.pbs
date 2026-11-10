@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_omp_gpu
+#PBS -l select=1:ncpus=8:ngpus=1:mem=64gb
+#PBS -l walltime=01:00:00
+#PBS -j oe
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR}"
+
+# Build and run the serial reference in the same GCC environment used by the
+# CPU experiments before switching to the NVIDIA OpenMP-offload compiler.
+source "${PBS_O_WORKDIR}/config/vanda_env.sh"
+make -j 8
+mkdir -p results/raw results/processed
+
+validation_graph="data/validation_graph_100000_k16"
+if [[ ! -f "${validation_graph}/graph.meta" ]]; then
+  bin/generate_synthetic \
+    --vertices 100000 \
+    --edges-per-vertex 16 \
+    --model skewed \
+    --seed 5208 \
+    --output "${validation_graph}"
+fi
+
+serial_scores="results/processed/openmp_gpu_validation_serial_${PBS_JOBID}.bin"
+gpu_scores="results/processed/openmp_gpu_validation_device_${PBS_JOBID}.bin"
+comparison="results/processed/openmp_gpu_score_comparison_${PBS_JOBID}.csv"
+validation_result="results/raw/openmp_gpu_validation_${PBS_JOBID}.csv"
+cpu_result="results/raw/openmp_gpu_node_cpu_${PBS_JOBID}.csv"
+gpu_result="results/raw/openmp_gpu_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+
+bin/pagerank_serial \
+  --graph "${validation_graph}" \
+  --fixed-iterations 100 \
+  --top-k 0 \
+  --quiet \
+  --scores-binary-output "${serial_scores}" \
+  --output "${validation_result}"
+
+for ((repeat=1; repeat<=repetitions; repeat++)); do
+  echo "OpenMP-GPU-node CPU reference repeat=${repeat}"
+  bin/pagerank_serial \
+    --graph data/pokec_graph \
+    --fixed-iterations 100 \
+    --top-k 0 \
+    --quiet \
+    --output "${cpu_result}"
+done
+
+# Compile the same PageRank loop structure for OpenMP target offloading.
+source "${PBS_O_WORKDIR}/config/vanda_gpu_env.sh"
+make openmp_gpu
+export OMP_TARGET_OFFLOAD=MANDATORY
+
+nvidia-smi --query-gpu=name,driver_version,memory.total \
+  --format=csv > "results/raw/openmp_gpu_metadata_${PBS_JOBID}.csv"
+
+bin/pagerank_openmp_gpu \
+  --graph "${validation_graph}" \
+  --fixed-iterations 100 \
+  --top-k 0 \
+  --scores-binary-output "${gpu_scores}" \
+  --output "${validation_result}"
+
+python3 scripts/compare_binary_scores.py \
+  --reference "${serial_scores}" \
+  --candidate "${gpu_scores}" \
+  --output "${comparison}" \
+  --l1-tolerance 1e-8 \
+  --max-tolerance 1e-10
+
+for ((repeat=1; repeat<=repetitions; repeat++)); do
+  echo "OpenMP target-offload PageRank repeat=${repeat}"
+  bin/pagerank_openmp_gpu \
+    --graph data/pokec_graph \
+    --fixed-iterations 100 \
+    --top-k 0 \
+    --quiet \
+    --output "${gpu_result}"
+done
+
+echo "OpenMP GPU validation: ${comparison}"
+echo "GPU-node CPU reference: ${cpu_result}"
+echo "OpenMP GPU results: ${gpu_result}"

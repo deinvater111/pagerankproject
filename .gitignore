@@ -1,0 +1,24 @@
+.DS_Store
+
+# Downloaded and generated graph data
+/data/
+/tests/generated/
+
+# Compiled files
+/bin/
+/build/
+
+# Experiment outputs
+/results/
+/figures/
+/report/
+
+# PBS logs
+*.o[0-9]*
+*.e[0-9]*
+
+# Editor and language caches
+*~
+*.swp
+__pycache__/
+*.pyc

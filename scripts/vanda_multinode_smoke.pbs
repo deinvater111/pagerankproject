@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_2n_smoke
+#PBS -l select=2:ncpus=4:mpiprocs=2:mem=4gb
+#PBS -l place=scatter
+#PBS -l walltime=00:10:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+echo "Allocated nodes:"
+sort "${PBS_NODEFILE}" | uniq -c
+
+echo "Testing one MPI rank on each of two nodes..."
+run_mpi_ppr 2 1 1 hostname
+echo "Pure-MPI hostname test passed."
+
+graph="tests/generated/cycle"
+if [[ ! -f "${graph}/graph.meta" ]]; then
+  bin/preprocess --input tests/cycle.txt --output "${graph}"
+fi
+
+result="results/raw/multinode_smoke_${PBS_JOBID}.csv"
+echo "Testing hybrid placement: two ranks x two threads on each node..."
+export OMP_DISPLAY_AFFINITY=TRUE
+export OMP_AFFINITY_FORMAT="host=%H process=%P thread=%n affinity=%A"
+run_mpi_ppr 4 2 2 bin/pagerank_hybrid \
+  --graph "${graph}" \
+  --partition vertices \
+  --schedule static \
+  --fixed-iterations 5 \
+  --top-k 0 \
+  --quiet \
+  --output "${result}"
+unset OMP_DISPLAY_AFFINITY OMP_AFFINITY_FORMAT
+
+echo "Two-node smoke test passed: ${result}"

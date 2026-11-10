@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_strong
+#PBS -l select=1:ncpus=72:mpiprocs=72:mem=64gb
+#PBS -l place=excl
+#PBS -l walltime=02:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+graph="data/pokec_graph"
+result="results/raw/strong_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+
+# Hybrid executable with one thread provides the consistent T(1) baseline.
+for partition in vertices edges; do
+  for ranks in 1 2 4 8 18 36 72; do
+    for ((repeat=1; repeat<=repetitions; repeat++)); do
+      echo "strong partition=${partition} ranks=${ranks} repeat=${repeat}"
+      run_mpi "${ranks}" 1 bin/pagerank_hybrid \
+        --graph "${graph}" \
+        --partition "${partition}" \
+        --schedule static \
+        --fixed-iterations 100 \
+        --top-k 0 \
+        --quiet \
+        --output "${result}"
+    done
+  done
+done
+
+echo "Strong-scaling results: ${result}"

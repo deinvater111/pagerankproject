@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_ser_scale
+#PBS -l select=1:ncpus=1:mem=16gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+result="results/raw/serial_scaling_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+graphs=(
+  data/serial_n250000_k16
+  data/serial_n500000_k16
+  data/serial_n1000000_k4
+  data/serial_n1000000_k8
+  data/serial_n1000000_k16
+  data/serial_n1000000_k32
+  data/serial_n2000000_k16
+  data/serial_n4000000_k16
+)
+
+for graph in "${graphs[@]}"; do
+  if [[ ! -f "${graph}/graph.meta" ]]; then
+    echo "Missing ${graph}/graph.meta; run vanda_prepare_serial_scaling.pbs first." >&2
+    exit 2
+  fi
+  for ((repeat=1; repeat<=repetitions; repeat++)); do
+    echo "serial-scaling graph=${graph} repeat=${repeat}"
+    bin/pagerank_serial \
+      --graph "${graph}" \
+      --fixed-iterations 100 \
+      --top-k 0 \
+      --quiet \
+      --output "${result}"
+  done
+done
+
+echo "Serial-scaling results: ${result}"

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_correct
+#PBS -l select=1:ncpus=4:mpiprocs=2:mem=8gb
+#PBS -l walltime=00:15:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+make -j 4
+bash scripts/run_correctness.sh
+
+validation_graph="data/validation_graph_100000_k16"
+if [[ ! -f "${validation_graph}/graph.meta" ]]; then
+  bin/generate_synthetic \
+    --vertices 100000 \
+    --edges-per-vertex 16 \
+    --model skewed \
+    --seed 5208 \
+    --output "${validation_graph}"
+fi
+
+result="results/raw/vector_validation_${PBS_JOBID}.csv"
+serial_scores="results/processed/validation_serial_scores_${PBS_JOBID}.bin"
+hybrid_scores="results/processed/validation_hybrid_scores_${PBS_JOBID}.bin"
+comparison="results/processed/score_vector_comparison_${PBS_JOBID}.csv"
+bin/pagerank_serial \
+  --graph "${validation_graph}" \
+  --tolerance 1e-10 \
+  --max-iterations 200 \
+  --top-k 20 \
+  --scores-binary-output "${serial_scores}" \
+  --output "${result}"
+
+OMP_NUM_THREADS=2 OMP_DYNAMIC=FALSE OMP_PROC_BIND=close OMP_PLACES=cores \
+mpiexec -np 2 bin/pagerank_hybrid \
+  --graph "${validation_graph}" \
+  --partition vertices \
+  --schedule static \
+  --tolerance 1e-10 \
+  --max-iterations 200 \
+  --top-k 20 \
+  --scores-binary-output "${hybrid_scores}" \
+  --output "${result}"
+
+python3 scripts/compare_binary_scores.py \
+  --reference "${serial_scores}" \
+  --candidate "${hybrid_scores}" \
+  --output "${comparison}" \
+  --l1-tolerance 1e-8 \
+  --max-tolerance 1e-10
+
+pokec_result="results/raw/pokec_serial_validation_${PBS_JOBID}.csv"
+bin/pagerank_serial \
+  --graph data/pokec_graph \
+  --tolerance 1e-10 \
+  --max-iterations 100 \
+  --top-k 20 \
+  --output "${pokec_result}"
+
+echo "Vector-validation results: ${result}"
+echo "Score-vector comparison: ${comparison}"
+echo "Pokec serial validation: ${pokec_result}"

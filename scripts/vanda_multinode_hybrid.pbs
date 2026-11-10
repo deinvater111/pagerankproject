@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#PBS -N pagerank_2n_hybrid
+#PBS -l select=2:ncpus=72:mpiprocs=72:mem=64gb
+#PBS -l place=scatter:excl
+#PBS -l walltime=02:00:00
+#PBS -j oe
+
+set -euo pipefail
+source "${PBS_O_WORKDIR}/scripts/vanda_common.sh"
+
+result="results/raw/multinode_hybrid_${PBS_JOBID}.csv"
+repetitions="${REPETITIONS:-1}"
+
+# total_ranks ranks_per_node threads_per_rank; every row uses 144 physical cores.
+configurations=(
+  "2 1 72"
+  "4 2 36"
+  "8 4 18"
+  "18 9 8"
+  "36 18 4"
+  "72 36 2"
+  "144 72 1"
+)
+
+for partition in vertices edges; do
+  for configuration in "${configurations[@]}"; do
+    read -r ranks ranks_per_node threads <<< "${configuration}"
+    for ((repeat=1; repeat<=repetitions; repeat++)); do
+      echo "two-node hybrid partition=${partition} ranks=${ranks} ranks_per_node=${ranks_per_node} threads=${threads} repeat=${repeat}"
+      run_mpi_ppr "${ranks}" "${ranks_per_node}" "${threads}" bin/pagerank_hybrid \
+        --graph data/pokec_graph \
+        --partition "${partition}" \
+        --schedule static \
+        --fixed-iterations 100 \
+        --top-k 0 \
+        --quiet \
+        --output "${result}"
+    done
+  done
+done
+
+echo "Two-node hybrid results: ${result}"
