@@ -47,6 +47,7 @@ python3 scripts/compare_binary_scores.py \
   --reference "${serial_scores}" \
   --candidate "${hybrid_scores}" \
   --output "${comparison}" \
+  --expected-vertices 100000 \
   --l1-tolerance 1e-8 \
   --max-tolerance 1e-10
 
